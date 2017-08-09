@@ -1,9 +1,234 @@
-ALERT service_down
+# metric wide based rules
+
+
+ALERT instance_down
   IF up == 0
-  
+  FOR 5m
+  LABELS {severity = "critical"}
+  ANNOTATIONS {
+    summary = "Instance Down: {{ $labels.instance }}",
+    description = "{{ $labels.instance }} of job {{ $labels.job }} has been down for more than 5 minutes.",
+  }
+
+
+
+ALERT all_instances_down
+  IF max by(job)(up) == 0
+  FOR 5m
+  LABELS {severity = "critical"}
+  ANNOTATIONS {
+    summary = "All Instances Down: {{ $labels.job }}",
+    description = "all instances of job {{ $labels.job }} have been down for more than 5 minutes.",
+  }
+
+
+ALERT less_than_3_instances
+  IF sum by(job)(up) < bool 3
+  FOR 5m
+  LABELS {severity = "critical"}
+  ANNOTATIONS {
+    summary = "Low Instance Count: {{ $labels.job }}",
+    description = "less than 3 instances of job {{ $labels.job }} for more than 5 minutes.",
+  }
+
+
+ALERT some_instances_down
+  IF avg by(job)(up) < .75
+  FOR 5m
+  LABELS {severity = "critical"}
+  ANNOTATIONS {
+    summary = "Low Instance Count: {{ $labels.job }}",
+    description = "Less than 25% of average instance count of job {{ $labels.job }} for more than 5 minutes.",
+  }
+
+#######################
+# cadvisor based rules
+ALERT instance_down
+  IF  absent(container_memory_usage_bytes)
+  FOR 30s
+  LABELS {severity = "critical"}
+  ANNOTATIONS {
+    summary = "Instance down: {{ $labels.instance }}",
+    description = "Instance {{ $labels.instance }} of job {{ $labels.job }} down for more than 30 seconds. (cadvisor)"
+  }
+
+job:docker_cpu:top5 = topk(5, sum by(image) (rate(container_cpu_usage_seconds_total{id=~"/docker/.*"}[5m])))
+
+
+# mesos based rules
+
+app:mesos_cpu:top5 = topk(5, sum(rate(mesos_task_cpus_user_time_secs[5m])) by (app))
+
+
+slave:free_cpus =  sum(mesos_slave_cpus - mesos_slave_cpus_used) by (slave)
+
+ALERT mesos_master_mem_full
+	IF mesos_master_mem{type="free"} < 100
+	ANNOTATIONS {
+      summary = "Mesos Memory Full: {{ $labels.job }}",
+      description = "Mesos Memory Full {{ $labels.job }}",
+  }
+
+ALERT mesos_excessive_registration
+	IF rate(mesos_master_slave_registration_events_total[5m]) > 10
+	FOR 5m
+	ANNOTATIONS {
+      summary = "Mesos Excessive Registration: {{ $labels.job }}",
+      description = "Mesos Excessive Registration {{ $labels.job }}",
+  }
+
+
+#####################
+# node_exporter based rules
+
 ALERT high_load
   IF node_load1 > 0.5
   ANNOTATIONS {
-      summary = "Instance {{ $labels.instance }} under high load",
-      description = "{{ $labels.instance }} of job {{ $labels.job }} is under high load.",
+      summary = "Instance Load: {{ $labels.instance }}",
+      description = "{{ $labels.instance }} of job {{ $labels.job }} is under high load. (node_exporter)",
   }
+
+ALERT high_memory_load
+  IF (sum(node_memory_MemTotal) - sum(node_memory_MemFree + node_memory_Buffers + node_memory_Cached) ) / sum(node_memory_MemTotal) * 100 > 85
+  FOR 30s
+  LABELS { severity = "critical" }
+  ANNOTATIONS {
+      summary = "Server memory is almost full: {{ $labels.instance }}",
+      description = "{{ $labels.instance }} of job {{ $labels.job }}. Memory usage is {{ humanize $value }}%. (node_exporter)",
+  }
+
+ALERT disk_full_in_4h
+	IF predict_linear(node_filesystem_free[1h], 4*3600) < 0
+	FOR 5m
+	LABELS {severity="critical"}
+	ANNOTATIONS {
+		summary = "Disk Full: {{ $labels.instance }}",
+		description = "{{ $labels.instance }} of job {{ $labels.job }} Disk Full in 4 hours (node_exporter)",
+	}
+
+##################################
+
+# Sum of Nginx requests by job
+job:bad_server_requests:sum = sum(nginx_server_requests{host="*",code=~"5xx|4xx"}) by (job)
+job:good_server_requests:sum = sum(nginx_server_requests{host="*",code=~"2xx|3xx|1xx"}) by (job)
+job:total_server_requests:sum = sum(nginx_server_requests{host="*",code="total"}) by (job)
+
+
+job:total_redirects:sum = sum(nginx_server_requests{host="*",code="3xx"}) by (job)
+job:total_client_errors:sum = sum(nginx_server_requests{host="*",code="4xx"}) by (job)
+job:total_server_errors:sum = sum(nginx_server_requests{host="*",code="5xx"}) by (job)
+
+# Rate of Nginx requests over 5 mins
+job:good_server_requests:rate5m = rate(job:good_server_requests:sum[5m])
+job:bad_server_requests:rate5m = rate(job:bad_server_requests:sum[5m])
+job:total_server_requests:rate5m = rate(job:total_server_requests:sum[5m])
+
+job:total_redirects:rate5m = rate(job:total_redirects:sum[5m])
+
+job:errors:ratio_rate5m = sum by (job) (job:bad_server_requests:rate5m) / on (job) job:total_server_requests:rate5m
+
+
+
+
+ALERT high_error_rate
+	IF 	job:bad_server_requests:rate5m / 
+			job:total_server_requests:rate5m * 100 > 10
+	LABELS {severity="critical"}
+	ANNOTATIONS {
+		summary = "High Error Rate: {{ $labels.job }}",
+		description = "High Error rate {{ $labels.job }} 10% in the last 5 minutes",
+	}
+
+
+ALERT high_redirect_rate
+	IF 	job:total_redirects:rate5m / 
+			job:total_server_requests:rate5m * 100 > 10
+	LABELS {severity="critical"}
+	ANNOTATIONS {
+		summary = "High Redirect Rate: {{ $labels.job }}",
+		description = "High Redirect rate {{ $labels.job }} 10% in the last 5 minutes",
+	}
+
+
+##################################
+
+# lula rules
+
+job:lula_bad_server_requests:sum = sum(nginx_http_requests_total{host!="nginx-lula",status=~"(5|4).*"}) by (job)
+job:lula_bad_server_requests:rate5m = rate(job:lula_bad_server_requests:sum[5m])
+
+job:lula_total_server_requests:sum  = sum(nginx_http_requests_total{host!="nginx-lula"}) by (job)
+job:lula_total_server_requests:rate5m = rate(job:lula_total_server_requests:sum[5m])
+
+ALERT high_latency_rate
+
+	IF
+	sum(rate(nginx_http_request_duration_seconds_bucket{host!="nginx-lula",le="0.3"}[5m])) by (job)
+	/
+	sum(rate(nginx_http_request_duration_seconds_count{host!="nginx-lula"}[5m])) by (job) < 0.95
+  FOR 30s
+  LABELS {severity="critical"}
+	ANNOTATIONS {
+		summary = "High Latency Rate: {{ $labels.job }}",
+		description = "amount of requests served within 300ms dropped below 95%"
+	}
+
+# https://en.wikipedia.org/wiki/Apdex
+# Satisfied(S): 300ms
+# Tolerable(T): 1.5s
+
+# Apdex = (S + (T/2))/ Total requests
+# because T histogram bucket includes S we use the following to approximate:
+# Apdex = ((S + T)/2)/ Total requests
+# we are only interested in rates as these are conters
+
+
+job:lula_apdex_score:5m = (
+sum(rate(nginx_http_request_duration_seconds_bucket{host!="nginx-lula",le="0.3"}[5m])) by (job) 
++ sum(rate(nginx_http_request_duration_seconds_bucket{host!="nginx-lula",le="1.5"}[5m])) by (job)) 
+/ 2 / sum(rate(nginx_http_request_duration_seconds_count{host!="nginx-lula"}[5m])) by (job)
+
+ALERT low_apdex_score
+	IF 
+	job:lula_apdex_score:5m < 0.9
+  FOR 30s
+  LABELS {severity="critical"}
+	ANNOTATIONS {
+		summary = "Low Apdex Rate: {{ $labels.job }}",
+		description = "Tollerable requests dropped below 90% (current Apdex score: {{ $value }})"
+	}
+
+
+
+##################################
+
+# specific rules to examples
+
+ALERT nginx_high_request_latency
+  IF nginx_http_request_duration_seconds_bucket{le="0.5"} > 1
+  FOR 1m
+  LABELS {severity="critical"}
+  ANNOTATIONS {
+    summary = "High request latency: {{ $labels.instance }}",
+    description = "{{ $labels.instance }} has a median request latency above 1s (current value: {{ $value }}s)",
+  }
+
+
+
+ALERT latency_too_high
+	IF job:request_latency_seconds:mean5m{job="nginx"} > 0.5
+	  and on (job)
+	    job:requests:rate5m{job="nginx"} > 100
+	LABELS {severity="critical"}
+	ANNOTATIONS {
+		summary = "latency_too_high: {{ $labels.instance }}",
+		description = "{{ $labels.instance }} of job {{ $labels.job }} latency too high",
+}
+
+
+# blackbox_exporter rules
+
+ALERT ssl_cert_expiring_soon
+ IF probe_ssl_earliest_cert_expiry{job="blackbox"} - time() < 86400 * 30
+ FOR 10m
+

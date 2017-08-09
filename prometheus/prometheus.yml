@@ -29,3 +29,68 @@ scrape_configs:
 
     static_configs:
          - targets: ['localhost:9090','cadvisor:8080','node-exporter:9100']
+
+
+  - job_name: consul
+    consul_sd_configs:
+      - server: 'consul:8500'
+        services: ['cadvisor', 'node-exporter', 'nginx-vts-exporter', 'prometheus_mesos_exporter', 'nginx-lua-prometheus-9145']
+    relabel_configs:
+        - source_labels: ['__meta_consul_service']
+          regex:         '(.*)'
+          target_label:  'job'
+          replacement:   '$1'
+        - source_labels: ['__meta_consul_service_address']
+          regex:         '(.*)'
+          target_label:  'instance'
+          replacement:   '$1'
+        - source_labels: ['__meta_consul_service_address', '__meta_consul_service_port']
+          regex:         '(.*);(.*)'
+          target_label:  '__address__'
+          replacement:   '$1:$2'
+        - source_labels: ['__meta_consul_tags']
+          regex:         ',(production|canary),'
+          target_label:  'group'
+          replacement:   '$1'
+
+
+
+
+  - job_name: nginx
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+    - targets:
+      - nginx-exporter:9913
+      - nginx-exporter2:9913
+
+  - job_name: nginx-lula
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+    - targets:
+      - nginx-lula:9145
+
+  - job_name: mesos
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+    - targets:
+      - mesos-exporter:9105
+
+
+alerting:
+ alert_relabel_configs:
+ - source_labels: []
+   regex: (.+)\d+
+   target_label: nginx
+ alertmanagers:
+ - static_configs:
+   - targets: ['alertmanager1:9093', 'alertmanager2:9093']
+
