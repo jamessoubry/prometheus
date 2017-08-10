@@ -41,6 +41,60 @@ ALERT some_instances_down
     description = "Less than 25% of average instance count of job {{ $labels.job }} for more than 5 minutes.",
   }
 
+
+#####################
+# Spring
+
+ALERT high_heap_usage
+  IF heap_used / heap * 100 > 90
+  FOR 5m
+  LABELS {severity = "critical"}
+  ANNOTATIONS {
+      summary = "Heap Useage: {{ $labels.instance }}",
+      description = "{{ $labels.instance }} of job {{ $labels.job }} Heap is {{$value}}% full. (spring)",
+  }
+
+ALERT low_memory
+IF mem_free < 10
+LABELS {severity="critical"}
+	ANNOTATIONS {
+		summary = "Memory Low: {{ $labels.instance }}",
+		description = "{{ $labels.instance }} of job {{ $labels.job }} Memory Low {{$value}}kb (node_exporter)",
+	}
+
+ALERT memory_will_fill_up_in_1h
+
+	IF predict_linear(mem_free[1m], 1*3600) < 0
+
+	LABELS {severity="critical"}
+	ANNOTATIONS {
+		summary = "Memory Low: {{ $labels.instance }}",
+		description = "{{ $labels.instance }} of job {{ $labels.job }} Memory Full in 1 hour (node_exporter)",
+	}
+
+######################
+# Hystrix
+
+
+bookservice:hystrix_command_total:sum = sum(BookService_hystrix_command_total) by (command_name, command_group)
+bookservice:hystrix_command_error_total:sum = sum(BookService_hystrix_command_error_total) by (command_name, command_group)
+
+
+bookservice:hystrix_command_total:rate5m = rate(bookservice:hystrix_command_total:sum[5m])
+bookservice:hystrix_command_error_total:rate5m = rate(bookservice:hystrix_command_error_total:sum[5m])
+
+ALERT hystrix_error_rate
+IF
+bookservice:hystrix_command_error_total:rate5m
+/
+bookservice:hystrix_command_total:rate5m 
+* 100 > 10
+	LABELS {severity="critical"}
+	ANNOTATIONS {
+		summary = "BookService High Error Rate: {{ $labels.command_group }}.{{ $labels.command_name }}",
+		description = "BookServiceHigh Error rate {{ $labels.command_group }}.{{ $labels.command_name }} 10% in the last 5 minutes",
+	}
+
 #######################
 # cadvisor based rules
 ALERT instance_down
