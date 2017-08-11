@@ -62,6 +62,10 @@ services:
   node-exporter:
     container_name: node-exporter
     image: prom/node-exporter
+    ports:
+      - 9091:9091
+    expose:
+      - 9091
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
