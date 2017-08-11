@@ -18,6 +18,7 @@ rule_files:
 # A scrape configuration containing exactly one endpoint to scrape:
 # Here it's Prometheus itself.
 scrape_configs:
+  # http://localhost:9090/consoles/prometheus-overview.html?instance=localhost%3a9090
   # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
   - job_name: 'prometheus'
 
@@ -28,7 +29,46 @@ scrape_configs:
     # scheme defaults to 'http'.
 
     static_configs:
-         - targets: ['localhost:9090','cadvisor:8080','node-exporter:9100']
+         - targets: ['localhost:9090','cadvisor:8080']
+
+  #http://localhost:9090/consoles/node.html
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    ec2_sd_configs:
+      - region: eu-west-1
+        access_key: PUT_THE_ACCESS_KEY_HERE
+        secret_key: PUT_THE_SECRET_KEY_HERE
+        port: 9100
+    relabel_configs:
+      - source_labels: [__meta_ec2_tag_Name]
+        target_label: instance
+      - source_labels: [__meta_ec2_tag_env]
+        target_label: env
+      - source_labels: [__meta_ec2_tag_mesos_attributes]
+        target_label: mesos_attributes
+      - source_labels: [__meta_ec2_tag_mesos_role]
+        target_label: mesos_role
+      - source_labels: [__meta_ec2_tag_role]
+        target_label: role       
+      - source_labels: [__meta_ec2_instance_id]
+        target_label: ec2_instance_id
+      - source_labels: [__meta_ec2_availability_zone]
+        target_label: ec2_availability_zone
+      - source_labels: [__meta_ec2_instance_state]
+        target_label: ec2_instance_state
+      - source_labels: [__meta_ec2_instance_type]
+        target_label: ec2_instance_type
+      - source_labels: [__meta_ec2_private_ip]
+        target_label: ec2_private_ip
+      - source_labels: [__meta_ec2_public_dns_name]
+        target_label: ec2_public_dns_name
+      - source_labels: [__meta_ec2_public_ip]
+        target_label: ec2_public_ip
+      - source_labels: [__meta_ec2_subnet_id]
+        target_label: ec2_subnet_id
+      - source_labels: [__meta_ec2_vpc_id]
+        target_label: ec2_vpc_id
 
 
   - job_name: consul
