@@ -1,4 +1,13 @@
-# metric wide based rules
+
+
+top_10_metrics = topk(10, count by (__name__)({__name__=~".+"}))
+
+job:top_10_metrics = topk(10, count by (job)({__name__=~".+"}))
+
+
+#####################
+# by instance rules #
+#####################
 
 
 ALERT instance_down
@@ -9,7 +18,6 @@ ALERT instance_down
     summary = "Instance Down: {{ $labels.instance }}",
     description = "{{ $labels.instance }} of job {{ $labels.job }} has been down for more than 5 minutes.",
   }
-
 
 
 ALERT all_instances_down
@@ -42,8 +50,10 @@ ALERT some_instances_down
   }
 
 
-#####################
-# Spring
+######################
+# Spring based rules #
+######################
+
 
 ALERT high_heap_usage
   IF heap_used / heap * 100 > 90
@@ -54,49 +64,54 @@ ALERT high_heap_usage
       description = "{{ $labels.instance }} of job {{ $labels.job }} Heap is {{$value}}% full. (spring)",
   }
 
+
 ALERT low_memory
-IF mem_free < 10
-LABELS {severity="critical"}
+	IF mem_free < 10
+	LABELS {severity="critical"}
 	ANNOTATIONS {
 		summary = "Memory Low: {{ $labels.instance }}",
 		description = "{{ $labels.instance }} of job {{ $labels.job }} Memory Low {{$value}}kb (node_exporter)",
 	}
 
+
 ALERT memory_will_fill_up_in_1h
-
 	IF predict_linear(mem_free[1m], 1*3600) < 0
-
 	LABELS {severity="critical"}
 	ANNOTATIONS {
 		summary = "Memory Low: {{ $labels.instance }}",
 		description = "{{ $labels.instance }} of job {{ $labels.job }} Memory Full in 1 hour (node_exporter)",
 	}
 
-######################
-# Hystrix
+
+#######################
+# Hystrix based rules #
+#######################
 
 
 bookservice:hystrix_command_total:sum = sum(BookService_hystrix_command_total) by (command_name, command_group)
 bookservice:hystrix_command_error_total:sum = sum(BookService_hystrix_command_error_total) by (command_name, command_group)
 
-
 bookservice:hystrix_command_total:rate5m = rate(bookservice:hystrix_command_total:sum[5m])
 bookservice:hystrix_command_error_total:rate5m = rate(bookservice:hystrix_command_error_total:sum[5m])
 
+
 ALERT hystrix_error_rate
-IF
-bookservice:hystrix_command_error_total:rate5m
-/
-bookservice:hystrix_command_total:rate5m 
-* 100 > 10
+	IF 	bookservice:hystrix_command_error_total:rate5m
+			/
+			bookservice:hystrix_command_total:rate5m 
+			* 100 > 10
 	LABELS {severity="critical"}
 	ANNOTATIONS {
 		summary = "BookService High Error Rate: {{ $labels.command_group }}.{{ $labels.command_name }}",
 		description = "BookServiceHigh Error rate {{ $labels.command_group }}.{{ $labels.command_name }} 10% in the last 5 minutes",
 	}
 
-#######################
-# cadvisor based rules
+
+########################
+# cadvisor based rules #
+########################
+
+
 ALERT instance_down
   IF  absent(container_memory_usage_bytes)
   FOR 30s
@@ -106,15 +121,19 @@ ALERT instance_down
     description = "Instance {{ $labels.instance }} of job {{ $labels.job }} down for more than 30 seconds. (cadvisor)"
   }
 
+
 job:docker_cpu:top5 = topk(5, sum by(image) (rate(container_cpu_usage_seconds_total{id=~"/docker/.*"}[5m])))
 
 
-# mesos based rules
+#####################
+# mesos based rules #
+#####################
+
 
 app:mesos_cpu:top5 = topk(5, sum(rate(mesos_task_cpus_user_time_secs[5m])) by (app))
 
-
 slave:free_cpus =  sum(mesos_slave_cpus - mesos_slave_cpus_used) by (slave)
+
 
 ALERT mesos_master_mem_full
 	IF mesos_master_mem{type="free"} < 100
@@ -122,6 +141,7 @@ ALERT mesos_master_mem_full
       summary = "Mesos Memory Full: {{ $labels.job }}",
       description = "Mesos Memory Full {{ $labels.job }}",
   }
+
 
 ALERT mesos_excessive_registration
 	IF rate(mesos_master_slave_registration_events_total[5m]) > 10
@@ -132,8 +152,10 @@ ALERT mesos_excessive_registration
   }
 
 
-#####################
-# node_exporter based rules
+#############################
+# node_exporter based rules #
+#############################
+
 
 ALERT high_load
   IF node_load1 > 0.5
@@ -141,6 +163,7 @@ ALERT high_load
       summary = "Instance Load: {{ $labels.instance }}",
       description = "{{ $labels.instance }} of job {{ $labels.job }} is under high load. (node_exporter)",
   }
+
 
 ALERT high_memory_load
   IF (sum(node_memory_MemTotal) - sum(node_memory_MemFree + node_memory_Buffers + node_memory_Cached) ) / sum(node_memory_MemTotal) * 100 > 85
@@ -151,6 +174,27 @@ ALERT high_memory_load
       description = "{{ $labels.instance }} of job {{ $labels.job }}. Memory usage is {{ humanize $value }}%. (node_exporter)",
   }
 
+
+ALERT time_drift
+	IF abs(node_time - node_time{job='prometheus'}) > 100
+	FOR 5m
+	LABELS {severity="critical"}
+	ANNOTATIONS {
+		summary = "Time Drift: {{ $labels.instance }}",
+		description = "{{ $labels.instance }} of job {{ $labels.job }} Time Drift for 5m (node_exporter)",
+	}
+
+
+ALERT InstanceHighCpu
+  IF 100 - (avg by (instance) (rate(node_cpu{mode="idle"}[5m])) * 100) > 90
+  FOR 20m
+	LABELS {severity="critical"}
+  ANNOTATIONS {
+    summary = "High CPU Usage on {{ $labels.instance }}",
+    description = "CPU usage exceeds threshold (currently {{ $value|humanize }}% in use)",
+  }
+
+
 ALERT disk_full_in_4h
 	IF predict_linear(node_filesystem_free[1h], 4*3600) < 0
 	FOR 5m
@@ -160,19 +204,35 @@ ALERT disk_full_in_4h
 		description = "{{ $labels.instance }} of job {{ $labels.job }} Disk Full in 4 hours (node_exporter)",
 	}
 
-##################################
+
+instance:cpu_time_spent_in_each_mode:sum = sum without (cpu)(rate(node_cpu[1m]))  
+	/ ignoring(mode) group_left 
+  sum without (mode, cpu)(rate(node_cpu[1m])) 
+
+
+# A high iowait means that you are disk or network bound, high user or system means that you are CPU bound.
+instance:cpu_used:irate = irate(node_cpu[5m])
+
+instance:cpu_used:percent = 100 - (avg by (instance) (irate(node_cpu{mode="idle"}[5m])) * 100)
+
+
+#########################
+# Nginx vts based rules #
+#########################
+
 
 # Sum of Nginx requests by job
+
 job:bad_server_requests:sum = sum(nginx_server_requests{host="*",code=~"5xx|4xx"}) by (job)
 job:good_server_requests:sum = sum(nginx_server_requests{host="*",code=~"2xx|3xx|1xx"}) by (job)
 job:total_server_requests:sum = sum(nginx_server_requests{host="*",code="total"}) by (job)
-
 
 job:total_redirects:sum = sum(nginx_server_requests{host="*",code="3xx"}) by (job)
 job:total_client_errors:sum = sum(nginx_server_requests{host="*",code="4xx"}) by (job)
 job:total_server_errors:sum = sum(nginx_server_requests{host="*",code="5xx"}) by (job)
 
 # Rate of Nginx requests over 5 mins
+
 job:good_server_requests:rate5m = rate(job:good_server_requests:sum[5m])
 job:bad_server_requests:rate5m = rate(job:bad_server_requests:sum[5m])
 job:total_server_requests:rate5m = rate(job:total_server_requests:sum[5m])
@@ -180,8 +240,6 @@ job:total_server_requests:rate5m = rate(job:total_server_requests:sum[5m])
 job:total_redirects:rate5m = rate(job:total_redirects:sum[5m])
 
 job:errors:ratio_rate5m = sum by (job) (job:bad_server_requests:rate5m) / on (job) job:total_server_requests:rate5m
-
-
 
 
 ALERT high_error_rate
@@ -204,28 +262,56 @@ ALERT high_redirect_rate
 	}
 
 
-##################################
+##########################
+# Nginx lula based rules #
+##########################
 
-# lula rules
 
-job:lula_bad_server_requests:sum = sum(nginx_http_requests_total{host!="nginx-lula",status=~"(5|4).*"}) by (job)
+job:lula_bad_server_requests:sum = sum (nginx_http_requests_total{host!="nginx-lula",status=~"(5|4).*"}) by (job)
 job:lula_bad_server_requests:rate5m = rate(job:lula_bad_server_requests:sum[5m])
 
 job:lula_total_server_requests:sum  = sum(nginx_http_requests_total{host!="nginx-lula"}) by (job)
 job:lula_total_server_requests:rate5m = rate(job:lula_total_server_requests:sum[5m])
 
-ALERT high_latency_rate
-
-	IF
-	sum(rate(nginx_http_request_duration_seconds_bucket{host!="nginx-lula",le="0.3"}[5m])) by (job)
+job:lula_request_latency_seconds:mean5m = sum(rate(nginx_http_request_duration_seconds_sum[5m])) by (job)
 	/
-	sum(rate(nginx_http_request_duration_seconds_count{host!="nginx-lula"}[5m])) by (job) < 0.95
+  sum (rate(nginx_http_request_duration_seconds_count[5m])) by (job)
+
+
+
+job:lula_http_request_duration_seconds:90quantile = histogram_quantile(
+    0.9, 
+    sum without (instance)(rate(nginx_http_request_duration_seconds_bucket[5m]))
+    )
+
+ALERT high_latency_rate
+	IF
+		sum(rate(nginx_http_request_duration_seconds_bucket{host!="nginx-lula",le="0.3"}[5m])) by (job)
+		/
+		sum(rate(nginx_http_request_duration_seconds_count{host!="nginx-lula"}[5m])) by (job) < 0.95
   FOR 30s
   LABELS {severity="critical"}
 	ANNOTATIONS {
 		summary = "High Latency Rate: {{ $labels.job }}",
 		description = "amount of requests served within 300ms dropped below 95%"
 	}
+
+
+
+ALERT latency_too_high
+	IF job:lula_request_latency_seconds:mean5m > 0.5
+	  and on (job)
+	    job:lula_total_server_requests:rate5m > 100
+	  and on ()
+     hour() > 9 < 17  # From 9am to 5pm UTC.
+	LABELS {severity="critical"}
+	ANNOTATIONS {
+		summary = "latency_too_high: {{ $labels.instance }}",
+		description = "{{ $labels.instance }} of job {{ $labels.job }} latency too high",
+}
+
+
+# Apdex score
 
 # https://en.wikipedia.org/wiki/Apdex
 # Satisfied(S): 300ms
@@ -236,11 +322,10 @@ ALERT high_latency_rate
 # Apdex = ((S + T)/2)/ Total requests
 # we are only interested in rates as these are conters
 
-
-job:lula_apdex_score:5m = (
-sum(rate(nginx_http_request_duration_seconds_bucket{host!="nginx-lula",le="0.3"}[5m])) by (job) 
+job:lula_apdex_score:5m = (sum(rate(nginx_http_request_duration_seconds_bucket{host!="nginx-lula",le="0.3"}[5m])) by (job) 
 + sum(rate(nginx_http_request_duration_seconds_bucket{host!="nginx-lula",le="1.5"}[5m])) by (job)) 
 / 2 / sum(rate(nginx_http_request_duration_seconds_count{host!="nginx-lula"}[5m])) by (job)
+
 
 ALERT low_apdex_score
 	IF 
@@ -267,17 +352,6 @@ ALERT nginx_high_request_latency
     description = "{{ $labels.instance }} has a median request latency above 1s (current value: {{ $value }}s)",
   }
 
-
-
-ALERT latency_too_high
-	IF job:request_latency_seconds:mean5m{job="nginx"} > 0.5
-	  and on (job)
-	    job:requests:rate5m{job="nginx"} > 100
-	LABELS {severity="critical"}
-	ANNOTATIONS {
-		summary = "latency_too_high: {{ $labels.instance }}",
-		description = "{{ $labels.instance }} of job {{ $labels.job }} latency too high",
-}
 
 
 # blackbox_exporter rules
