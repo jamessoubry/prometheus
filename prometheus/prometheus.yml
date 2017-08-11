@@ -7,7 +7,7 @@ global:
   # Attach these labels to any time series or alerts when communicating with
   # external systems (federation, remote storage, Alertmanager).
   external_labels:
-      monitor: 'my-project'
+      datacentre: 'global1'
 
 # Load and evaluate rules in this file every 'evaluation_interval' seconds.
 rule_files:
@@ -53,6 +53,18 @@ scrape_configs:
           action:        keep
 
 
+
+  - job_name: downstream_prometheus
+    honor_labels: true
+    metrics_path: /federate
+    params:
+      match[]:
+        - '{__name__=~"^job:.*"}'
+        - '{job="prometheus"}'
+    static_configs:
+      - targets:
+        - eu-west-1-prometheus:9090
+        - eu-west-2-prometheus:9090
 
 
 #These are scraped via consul and registrator
